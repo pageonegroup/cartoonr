@@ -32,7 +32,7 @@ const optionDirections = {
   3: `Create a clearly different composition from Options 1 and 2. Consider a close-up, head-and-shoulders, or another emotionally strong framing that fits the line, with a different character position and gesture.`
 };
 
-function buildPrompt({ characterName, line, option }) {
+function buildPrompt({ characterName, line, option, fontName = "", hasFontReference = false }) {
   return `
 Create ONE finished square cartoon artcard for the character "${characterName || "the supplied character"}".
 
@@ -40,7 +40,7 @@ SOURCE OF TRUTH
 The uploaded reference images are the sole visual basis. Preserve the same recognizable character, facial design, age cues, hairstyle, body proportions, clothing conventions, stroke/outline character, palette, coloring method, illustration finish, and personality shown in the references. Do not redesign the character and do not introduce a different illustration style.
 
 SPEECH BUBBLE
-Study any speech bubbles visible in the references and reproduce that same bubble language consistently: shape, outline, fill, padding, tail treatment, and overall typography character. The bubble must contain this exact line, verbatim:
+Study any speech bubbles visible in the character references and reproduce that same bubble language consistently: shape, outline, fill, padding, and tail treatment. If a final uploaded image is a typography specimen, it is NOT a character reference: use it only as the exact visual guide for the speech-bubble lettering. ${hasFontReference ? `The uploaded font specimen is named "${fontName || "Custom font"}". Match its letterforms as closely as possible.` : "Match the lettering style visible in the character references."} The bubble must contain this exact line, verbatim:
 "${line}"
 Do not rewrite, translate, shorten, correct, paraphrase, or add words.
 
@@ -53,8 +53,11 @@ ${optionDirections[option] || optionDirections[1]}
 COMPOSITION RULES
 - Produce a single artcard, never a collage, contact sheet, triptych, or multiple panels.
 - Square composition.
-- Keep the complete intended character composition safely inside the left and right canvas edges. No accidental clipping at either side.
+- BACKGROUND MUST ALWAYS BE PURE SOLID WHITE (#FFFFFF). No cream, yellow, gray, gradient, texture, scenery, shadows, colored wash, or decorative background.
+- NOTHING may touch the left or right canvas edges: character, hair, hands, speech bubble, props, furniture, plants, hearts, decorations, or any other object. Maintain a generous clear white safety margin on BOTH left and right sides.
+- Keep the complete intended character composition safely inside all canvas edges. No accidental clipping.
 - Keep important hands, gestures, props, and facial features visible.
+- Do not add decorative objects, hearts, plants, furniture, or props unless the dialogue truly requires them; when used, they must remain fully inside the safe margins.
 - Use clean negative space so the speech bubble and character do not fight for attention.
 - No watermark, no extra captions, no additional characters unless clearly present as part of the established reference concept.
 - The three options for the same line must feel meaningfully different in pose, crop, placement, gesture, and composition while remaining the exact same character and style.
@@ -67,7 +70,7 @@ app.post("/generate", async (req, res) => {
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured." });
     }
 
-    const { characterName = "", characterReferences = [], line = "", option = 1 } = req.body || {};
+    const { characterName = "", characterReferences = [], fontReference = "", fontName = "", line = "", option = 1 } = req.body || {};
     if (!line.trim()) return res.status(400).json({ error: "line is required" });
     if (!Array.isArray(characterReferences) || characterReferences.length === 0) {
       return res.status(400).json({ error: "At least one character reference image is required." });
@@ -79,10 +82,15 @@ app.post("/generate", async (req, res) => {
       images.push(await toFile(p.buffer, `reference-${i + 1}.${p.ext}`, { type: p.mime }));
     }
 
+    if (fontReference) {
+      const fp = parseDataUrl(fontReference, characterReferences.length);
+      images.push(await toFile(fp.buffer, `font-reference.${fp.ext}`, { type: fp.mime }));
+    }
+
     const result = await client.images.edit({
       model: "gpt-image-2",
       image: images,
-      prompt: buildPrompt({ characterName, line, option: Number(option) || 1 }),
+      prompt: buildPrompt({ characterName, line, option: Number(option) || 1, fontName, hasFontReference: Boolean(fontReference) }),
       size: "1088x1088",
       quality: "high",
       output_format: "png",
