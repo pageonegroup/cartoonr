@@ -1,2 +1,2 @@
-# Cartoonr Backend v2.2
-Locks structured user directions and the supplied rounded-rectangle kawaii comic speech-bubble/lettering style.
+# Cartoonr Backend v2.4
+Adds a deterministic-random composition bank so multi-option generations vary facing direction, body orientation, crop, placement, head angle, free-hand gesture and bubble placement while preserving explicit user directions.

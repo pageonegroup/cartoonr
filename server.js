@@ -46,13 +46,76 @@ const CARTOONR_BUBBLE_STYLE={
 };
 
 const dirs={
- 1:"Use a close or half-body composition when appropriate, with strong readable expression.",
- 2:"Use a clearly different camera distance and composition from option 1; full-body or three-quarter body when appropriate.",
- 3:"Use a clearly different composition from options 1 and 2, changing crop and character placement."
+  1:`DIVERSITY PLAN A — WIDE / FULL BODY
+- Show the complete character from head to feet with generous white space.
+- Character placement: left third or center-left.
+- Body orientation: frontal or slight three-quarter turn.
+- Required action must remain clearly visible.
+- Free hand must use a natural secondary gesture that is NOT hand-on-hip and NOT pointing.
+- Speech bubble placement: upper-right or above character.
+- Do not use the composition assigned to Options 2 or 3.`,
+
+  2:`DIVERSITY PLAN B — MEDIUM / THREE-QUARTER
+- Frame approximately knees or mid-thigh upward; do NOT show the same full-body framing as Option 1.
+- Character placement: center or center-right.
+- Body orientation: visibly different from Option 1, preferably opposite three-quarter angle.
+- Required action must remain clearly visible.
+- Free hand must perform an open-palm, chest-level, or relaxed secondary gesture; do NOT copy Option 1.
+- Speech bubble placement: upper-left or opposite the character.
+- Do not use the composition assigned to Options 1 or 3.`,
+
+  3:`DIVERSITY PLAN C — CLOSE / WAIST-UP
+- Frame waist/chest upward; character should appear substantially larger than Options 1 and 2.
+- Character placement: right third or a deliberately different position from the other options.
+- Use a distinct head angle and body lean.
+- Required action must remain clearly visible even in the close crop.
+- Free hand gesture must differ from Options 1 and 2.
+- Speech bubble placement must differ from the other options while remaining safely inside the canvas.
+- Do not use full-body framing and do not imitate Option 1 or Option 2.`
 };
 
-app.get("/",(_q,res)=>res.json({ok:true,service:"cartoonr-backend",version:"2.2-bubble-lock",model:"gpt-image-2",backgroundJobs:true}));
-app.get("/health",(_q,res)=>res.json({ok:true,version:"2.2-bubble-lock",openaiConfigured:Boolean(process.env.OPENAI_API_KEY),jobs:jobs.size}));
+
+const POSE_BANK=[
+ {id:"front-wide",crop:"full body",placement:"left third",orientation:"front-facing",head:"slight tilt right",freeHand:"open palm away from torso",bubble:"upper right"},
+ {id:"three-quarter-left",crop:"three-quarter body",placement:"right third",orientation:"three-quarter facing camera-left",head:"turned slightly toward viewer",freeHand:"hand near chest",bubble:"upper left"},
+ {id:"profile-left",crop:"medium body",placement:"center-right",orientation:"clear left-facing profile or near-profile",head:"looking toward camera-left",freeHand:"relaxed downward or interacting with required prop",bubble:"upper left"},
+ {id:"profile-right",crop:"medium body",placement:"center-left",orientation:"clear right-facing profile or near-profile",head:"looking toward camera-right",freeHand:"relaxed outward gesture",bubble:"upper right"},
+ {id:"close-lean",crop:"waist-up close",placement:"right third",orientation:"three-quarter facing camera-right",head:"slight downward/upward tilt",freeHand:"distinct expressive gesture",bubble:"upper left"},
+ {id:"wide-turn",crop:"full body",placement:"center",orientation:"body turned partly away, face looking back toward viewer",head:"over-shoulder turn",freeHand:"relaxed natural position",bubble:"upper opposite side"},
+ {id:"low-seated",crop:"full body including furniture if required",placement:"left or center-left",orientation:"three-quarter facing camera-right",head:"toward viewer",freeHand:"resting or interacting with required prop",bubble:"upper right"},
+ {id:"dynamic-step",crop:"full body",placement:"right or center-right",orientation:"walking/stepping three-quarter facing camera-left",head:"toward destination or viewer",freeHand:"counterbalanced natural motion",bubble:"upper left"},
+ {id:"close-front",crop:"chest-up",placement:"center-left",orientation:"front-facing",head:"distinct tilt",freeHand:"visible only if compatible with crop",bubble:"upper right"}
+];
+function hashSeed(s){
+ let h=2166136261;
+ for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}
+ return h>>>0;
+}
+function diversityPlans(job){
+ const count=job.optionCount||3;
+ const seed=hashSeed(`${job.id}|${job.stripName}|${job.createdAt}`);
+ const pool=[...POSE_BANK];
+ // deterministic shuffle gives each new job a different plan without changing while polling/retrying
+ for(let i=pool.length-1;i>0;i--){
+   const j=(seed + Math.imul(i,2654435761))%(i+1);
+   [pool[i],pool[j]]=[pool[j],pool[i]];
+ }
+ const chosen=[];
+ for(const p of pool){
+   if(chosen.length>=count)break;
+   const orientations=chosen.map(x=>x.orientation);
+   const crops=chosen.map(x=>x.crop);
+   // prefer genuinely different facing directions and crops
+   if(orientations.includes(p.orientation))continue;
+   if(chosen.length<2 && crops.includes(p.crop))continue;
+   chosen.push(p);
+ }
+ for(const p of pool){if(chosen.length>=count)break;if(!chosen.includes(p))chosen.push(p);}
+ return chosen;
+}
+
+app.get("/",(_q,res)=>res.json({ok:true,service:"cartoonr-backend",version:"2.3-diversity",model:"gpt-image-2",backgroundJobs:true}));
+app.get("/health",(_q,res)=>res.json({ok:true,version:"2.3-diversity",openaiConfigured:Boolean(process.env.OPENAI_API_KEY),jobs:jobs.size}));
 
 function parseDataUrl(dataUrl,index){
  const m=/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/s.exec(dataUrl||"");
@@ -70,7 +133,7 @@ async function prepareImages(refs){
  return out;
 }
 
-function promptFor({characterName,line,option}){
+function promptFor({characterName,line,option,optionCount=3}){
  const dialogue=String(line?.text||"").trim();
  const pose=String(line?.pose||"").trim();
  const direction=String(line?.direction||"").trim();
@@ -100,12 +163,12 @@ CRITICAL: the bubble must look like the supplied reference: a hand-drawn ROUNDED
 BACKGROUND
 Pure solid white (#FFFFFF), no colored wash, gradient, texture, scenery, room, or vignette.
 
-OPTION ${option}
-${dirs[option]||dirs[1]}
+OPTION ${option} OF ${optionCount}
+${optionCount>1 ? (dirs[option]||dirs[1]) : "SINGLE-OPTION MODE — choose the strongest composition for the user's directions without needing to follow the multi-option diversity plans."}
 Variation may change framing, placement, camera distance, and secondary body language, but MUST preserve every user-required action, prop, and emotion.
 
-DIVERSITY
-Do not default to pointing, raised index finger, shrugging, or hands on hips unless explicitly requested. Make this option compositionally distinct from the other options.
+OPTION DIVERSITY — HARD RULE
+The selected DIVERSITY PLAN above is mandatory whenever more than one option is requested. Options are alternatives, not near-duplicates. Preserve the same character identity, exact dialogue, required pose/action, required prop/action, emotion, white background, and bubble style, but vary ALL practical composition dimensions: camera distance, crop, body orientation, character placement, head angle, free-hand gesture, prop position when possible, and speech-bubble placement. Never create two options with substantially the same silhouette and framing. Do not default to pointing, raised index finger, shrugging, or hands on hips unless explicitly required by the user.
 
 SAFE COMPOSITION
 Keep character, hair, hands, clothing, props, furniture, speech bubble and tail fully inside the canvas with generous white margins. Nothing may touch or be cut by the left or right edge.
@@ -119,7 +182,7 @@ async function generateOne(job,lineIndex,option){
  rec.status="generating";rec.startedAt=Date.now();rec.error=null;job.updatedAt=Date.now();
  try{
    const images=await prepareImages(job.characterReferences);
-   const r=await client.images.edit({model:"gpt-image-2",image:images,prompt:promptFor({characterName:job.characterName,line,option}),size:"1024x1024",quality:"high",output_format:"png",n:1});
+   const r=await client.images.edit({model:"gpt-image-2",image:images,prompt:promptFor({characterName:job.characterName,line,option,optionCount:job.optionCount}),size:"1024x1024",quality:"high",output_format:"png",n:1});
    const b64=r?.data?.[0]?.b64_json;
    if(!b64)throw new Error("OpenAI returned no image data.");
    rec.imageData=`data:image/png;base64,${b64}`;rec.status="complete";rec.completedAt=Date.now();
@@ -150,6 +213,7 @@ app.post("/jobs",(req,res)=>{
     return {index,text:String(x.text||""),pose:String(x.pose||""),direction:String(x.direction||""),emotion:String(x.emotion||""),
       options:Array.from({length:count},(_,k)=>({option:k+1,status:"queued",startedAt:null,completedAt:null,imageData:null,error:null}))};
    })};
+  job.diversityPlans=diversityPlans(job);
   jobs.set(id,job);res.status(202).json({ok:true,jobId:id,status:"queued"});setImmediate(()=>runJob(job));
  }catch(e){res.status(500).json({error:e?.message||"Could not create job."});}
 });
@@ -163,4 +227,4 @@ app.post("/jobs/:id/retry",(req,res)=>{
  if(!job.lines[li]||op<1||op>job.optionCount)return res.status(400).json({error:"Invalid lineIndex/option."});
  res.status(202).json({ok:true});setImmediate(()=>generateOne(job,li,op));
 });
-app.listen(port,"0.0.0.0",()=>console.log(`Cartoonr backend v2.2 listening on ${port}`));
+app.listen(port,"0.0.0.0",()=>console.log(`Cartoonr backend v2.3 listening on ${port}`));
