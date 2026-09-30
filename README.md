@@ -1,2 +1,3 @@
-# Cartoonr Backend v2.4
-Adds a deterministic-random composition bank so multi-option generations vary facing direction, body orientation, crop, placement, head angle, free-hand gesture and bubble placement while preserving explicit user directions.
+# Cartoonr Backend v2.5
+Fixes the `Cannot read properties of undefined (reading 'orientation')` crash in the random pose shuffle.
+Also ensures the assigned random composition is actually passed into image generation.

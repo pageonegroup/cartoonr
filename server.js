@@ -97,20 +97,23 @@ function diversityPlans(job){
  const pool=[...POSE_BANK];
  // deterministic shuffle gives each new job a different plan without changing while polling/retrying
  for(let i=pool.length-1;i>0;i--){
-   const j=(seed + Math.imul(i,2654435761))%(i+1);
-   [pool[i],pool[j]]=[pool[j],pool[i]];
+   const mixed=(seed + Math.imul(i,2654435761))>>>0;
+   const j=mixed%(i+1);
+   if(pool[j]!==undefined)[pool[i],pool[j]]=[pool[j],pool[i]];
  }
  const chosen=[];
  for(const p of pool){
    if(chosen.length>=count)break;
-   const orientations=chosen.map(x=>x.orientation);
-   const crops=chosen.map(x=>x.crop);
+   if(!p)continue;
+   const orientations=chosen.filter(Boolean).map(x=>x.orientation||"");
+   const crops=chosen.filter(Boolean).map(x=>x.crop||"");
    // prefer genuinely different facing directions and crops
    if(orientations.includes(p.orientation))continue;
    if(chosen.length<2 && crops.includes(p.crop))continue;
    chosen.push(p);
  }
- for(const p of pool){if(chosen.length>=count)break;if(!chosen.includes(p))chosen.push(p);}
+ for(const p of pool){if(chosen.length>=count)break;if(p&&!chosen.includes(p))chosen.push(p);}
+ while(chosen.length<count)chosen.push(POSE_BANK[chosen.length%POSE_BANK.length]);
  return chosen;
 }
 
@@ -133,7 +136,7 @@ async function prepareImages(refs){
  return out;
 }
 
-function promptFor({characterName,line,option,optionCount=3}){
+function promptFor({characterName,line,option,optionCount=3,plan=null}){
  const dialogue=String(line?.text||"").trim();
  const pose=String(line?.pose||"").trim();
  const direction=String(line?.direction||"").trim();
@@ -164,7 +167,14 @@ BACKGROUND
 Pure solid white (#FFFFFF), no colored wash, gradient, texture, scenery, room, or vignette.
 
 OPTION ${option} OF ${optionCount}
-${optionCount>1 ? (dirs[option]||dirs[1]) : "SINGLE-OPTION MODE — choose the strongest composition for the user's directions without needing to follow the multi-option diversity plans."}
+${optionCount>1 ? `ASSIGNED RANDOM COMPOSITION — FOLLOW THIS:
+Crop: ${plan?.crop||"natural"}
+Character placement: ${plan?.placement||"natural"}
+Body orientation: ${plan?.orientation||"natural"}
+Head direction: ${plan?.head||"natural"}
+Free-hand behavior: ${plan?.freeHand||"natural"}
+Speech-bubble placement: ${plan?.bubble||"natural"}` : "SINGLE-OPTION MODE — choose the strongest composition for the user's directions."}
+The assigned composition is mandatory unless it conflicts with an explicit user Pose / Action or Additional Direction. User directions always win.
 Variation may change framing, placement, camera distance, and secondary body language, but MUST preserve every user-required action, prop, and emotion.
 
 OPTION DIVERSITY — HARD RULE
@@ -182,7 +192,7 @@ async function generateOne(job,lineIndex,option){
  rec.status="generating";rec.startedAt=Date.now();rec.error=null;job.updatedAt=Date.now();
  try{
    const images=await prepareImages(job.characterReferences);
-   const r=await client.images.edit({model:"gpt-image-2",image:images,prompt:promptFor({characterName:job.characterName,line,option,optionCount:job.optionCount}),size:"1024x1024",quality:"high",output_format:"png",n:1});
+   const r=await client.images.edit({model:"gpt-image-2",image:images,prompt:promptFor({characterName:job.characterName,line,option,optionCount:job.optionCount,plan:job.diversityPlans?.[option-1]||POSE_BANK[(option-1)%POSE_BANK.length]}),size:"1024x1024",quality:"high",output_format:"png",n:1});
    const b64=r?.data?.[0]?.b64_json;
    if(!b64)throw new Error("OpenAI returned no image data.");
    rec.imageData=`data:image/png;base64,${b64}`;rec.status="complete";rec.completedAt=Date.now();
@@ -227,4 +237,4 @@ app.post("/jobs/:id/retry",(req,res)=>{
  if(!job.lines[li]||op<1||op>job.optionCount)return res.status(400).json({error:"Invalid lineIndex/option."});
  res.status(202).json({ok:true});setImmediate(()=>generateOne(job,li,op));
 });
-app.listen(port,"0.0.0.0",()=>console.log(`Cartoonr backend v2.3 listening on ${port}`));
+app.listen(port,"0.0.0.0",()=>console.log(`Cartoonr backend v2.5 listening on ${port}`));
